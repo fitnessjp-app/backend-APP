@@ -5,12 +5,16 @@ const memberSchema = new mongoose.Schema(
   {
     photo: { type: String, default: '' },
     name: { type: String, required: true, trim: true },
+    // Optional: many gym members don't use email. Receipts are emailed only when it is present.
     email: {
       type: String,
-      required: true,
       trim: true,
       lowercase: true,
-      match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
+      default: '',
+      validate: {
+        validator: (v) => !v || /^\S+@\S+\.\S+$/.test(v),
+        message: 'Please provide a valid email',
+      },
     },
     phone: {
       type: String,
@@ -21,11 +25,13 @@ const memberSchema = new mongoose.Schema(
     gender: { type: String, enum: ['male', 'female', 'other'] },
     age: { type: Number },
     address: { type: String },
-    batch: { type: String, enum: ['morning', 'evening'], required: true },
+    batch: { type: String, enum: ['morning', 'evening'], default: 'morning' },
     plan: { type: mongoose.Schema.Types.ObjectId, ref: 'Plan', required: true },
     admissionDate: { type: Date, default: Date.now },
     expiryDate: { type: Date },
-    amountPaid: { type: Number, required: true },
+    amountPaid: { type: Number, default: 0 },
+    // true = joined before this app was used; entered manually, no payment/receipt recorded.
+    isOldMember: { type: Boolean, default: false },
     paymentMode: { type: String, default: 'cash', enum: ['cash'] },
     status: { type: String, enum: ['active', 'expired'], default: 'active' },
     admittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },

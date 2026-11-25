@@ -35,20 +35,33 @@ const dayEnd = (str) => {
 };
 
 // POST /api/members
+//  - new admission : pays now, gets a receipt + QR
+//  - old member    : (isOldMember=true) already joined earlier; we only record the details, joining date and
+//                    current expiry. No payment / receipt is created, so revenue is not affected.
 const createMember = asyncHandler(async (req, res) => {
-  const { name, email, phone, gender, age, address, batch, plan, amountPaid, admissionDate: admissionInput } = req.body;
+  const { name, email, phone, gender, age, address, batch, plan, amountPaid, admissionDate: admissionInput, expiryDate: expiryInput } = req.body;
+  const isOldMember = String(req.body.isOldMember) === 'true';
 
   const planDoc = await Plan.findById(plan);
   if (!planDoc) return res.status(400).json({ success: false, message: 'Invalid plan selected' });
 
+  if (!isOldMember && (amountPaid === undefined || amountPaid === '' || isNaN(amountPaid))) {
+    return res.status(400).json({ success: false, message: 'Amount received is required' });
+  }
+
   const parsed = admissionInput ? new Date(admissionInput) : null;
   const admissionDate = parsed && !isNaN(parsed) ? parsed : new Date();
-  const expiryDate = calculateExpiry(admissionDate, planDoc.durationInMonths);
+
+  let expiryDate = calculateExpiry(admissionDate, planDoc.durationInMonths);
+  if (isOldMember && expiryInput) {
+    const e = new Date(expiryInput);
+    if (!isNaN(e)) expiryDate = e;
+  }
 
   const member = await Member.create({
     photo: req.file ? req.file.path : '',
     name,
-    email,
+    email: email || '',
     phone,
     gender: gender || undefined,
     age: age || undefined,
@@ -57,32 +70,38 @@ const createMember = asyncHandler(async (req, res) => {
     plan: planDoc._id,
     admissionDate,
     expiryDate,
-    amountPaid,
+    amountPaid: isOldMember ? 0 : amountPaid,
+    isOldMember,
     paymentMode: 'cash',
     status: expiryDate < new Date() ? 'expired' : 'active',
     admittedBy: req.admin._id,
   });
 
-  const payment = await Payment.create({
-    member: member._id,
-    plan: planDoc._id,
-    amount: amountPaid,
-    type: 'new_admission',
-    paymentMode: 'cash',
-    receivedBy: req.admin._id,
-    date: admissionDate,
-    ...receiptSnapshot({ member, plan: planDoc, startDate: admissionDate, expiryDate }),
-  });
+  let payment = null;
+  if (!isOldMember) {
+    payment = await Payment.create({
+      member: member._id,
+      plan: planDoc._id,
+      amount: amountPaid,
+      type: 'new_admission',
+      paymentMode: 'cash',
+      receivedBy: req.admin._id,
+      date: admissionDate,
+      ...receiptSnapshot({ member, plan: planDoc, startDate: admissionDate, expiryDate }),
+    });
 
-  // Fire-and-forget: a mail failure must never block the admission.
-  sendEmail({
-    to: member.email,
-    subject: 'Welcome to FitZone — Membership Receipt',
-    html: admissionReceiptTemplate({ member, plan: planDoc }),
-  }).catch((err) => console.error('Failed to send admission receipt email:', err.message));
+    // Fire-and-forget: a mail failure must never block the admission.
+    if (member.email) {
+      sendEmail({
+        to: member.email,
+        subject: 'Welcome to FitZone — Membership Receipt',
+        html: admissionReceiptTemplate({ member, plan: planDoc }),
+      }).catch((err) => console.error('Failed to send admission receipt email:', err.message));
+    }
+  }
 
   const populated = await member.populate('plan');
-  res.status(201).json({ success: true, member: populated, receiptToken: payment.receiptToken });
+  res.status(201).json({ success: true, member: populated, receiptToken: payment?.receiptToken || null });
 });
 
 // GET /api/members
@@ -90,7 +109,7 @@ const createMember = asyncHandler(async (req, res) => {
 //        expiryFrom, expiryTo, ageMin, ageMax, sort, page, limit
 const getMembers = asyncHandler(async (req, res) => {
   const {
-    search, status, batch, plan, gender,
+    search, status, batch, plan, gender, type,
     admittedFrom, admittedTo, expiryFrom, expiryTo, ageMin, ageMax,
     page = 1, limit = 20, sort = 'newest',
   } = req.query;
@@ -112,6 +131,8 @@ const getMembers = asyncHandler(async (req, res) => {
   if (batch) base.batch = batch;
   if (plan) base.plan = plan;
   if (gender) base.gender = gender;
+  if (type === 'old') base.isOldMember = true;
+  if (type === 'new') base.isOldMember = { $ne: true };
 
   const admitted = {};
   if (admittedFrom && dayStart(admittedFrom)) admitted.$gte = dayStart(admittedFrom);
@@ -256,11 +277,13 @@ const renewMember = asyncHandler(async (req, res) => {
     ...receiptSnapshot({ member, plan: planDoc, startDate: now, expiryDate: member.expiryDate }),
   });
 
-  sendEmail({
-    to: member.email,
-    subject: 'FitZone — Membership Renewed',
-    html: renewalReceiptTemplate({ member, plan: planDoc }),
-  }).catch((err) => console.error('Failed to send renewal receipt email:', err.message));
+  if (member.email) {
+    sendEmail({
+      to: member.email,
+      subject: 'FitZone — Membership Renewed',
+      html: renewalReceiptTemplate({ member, plan: planDoc }),
+    }).catch((err) => console.error('Failed to send renewal receipt email:', err.message));
+  }
 
   const populated = await member.populate('plan');
   res.json({ success: true, member: populated, receiptToken: payment.receiptToken });

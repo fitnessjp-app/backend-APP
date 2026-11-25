@@ -25,6 +25,7 @@ const startCronJobs = () => {
 
       const expiringMembers = await Member.find({
         status: 'active',
+        email: { $nin: [null, ''] },
         expiryDate: { $gte: rangeStart, $lt: rangeEnd },
       });
 

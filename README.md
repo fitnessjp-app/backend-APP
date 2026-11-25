@@ -43,4 +43,3 @@ name_asc, name_desc, amount_high, amount_low) · `page` · `limit`. Response inc
 After every admission or renewal the app shows a QR. Scanning it opens `GET /api/receipts/:token` (public, token is a
 48-char random string) and the receipt PDF downloads directly. Optional header details: `GYM_NAME`, `GYM_ADDRESS`, `GYM_PHONE` in `.env`.
 The QR contains your backend URL, so it only works on a member's phone when the backend is hosted (not `localhost`).
-# backend-APP
